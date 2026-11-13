@@ -46,6 +46,7 @@
         </div>
       </div>
       
+      {% if can_control %}
       <div class="control-section">
         <form method="post" class="brutal-form">
           {% csrf_token %}
@@ -62,6 +63,7 @@
           </div>
         </form>
       </div>
+      {% endif %}
     </div>
   </div>
 
@@ -75,7 +77,12 @@
           <span>{{ lamp.name }} (GPIO: {{ lamp.gpio_pin|default:"N/A" }})</span>
           <div class="lamp-controls">
             <span>Status: {% if lamp.status %}ON{% else %}OFF{% endif %}</span>
-            <a href="{% url 'toggle_lamp' lamp.id %}" class="control-btn-small">Toggle</a>
+            {% if can_control %}
+            <form method="post" action="{% url 'toggle_lamp' lamp.id %}" style="display:inline">
+              {% csrf_token %}
+              <button type="submit" class="control-btn-small">Toggle</button>
+            </form>
+            {% endif %}
           </div>
         </div>
       {% empty %}
