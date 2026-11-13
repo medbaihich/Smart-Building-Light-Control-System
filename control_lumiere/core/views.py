@@ -1,5 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
+from django.db.models import Q
+from django.views.decorators.http import require_POST
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.contrib.auth.models import User
@@ -31,6 +33,22 @@ def staff_member_required(view_func):
             return HttpResponseRedirect(reverse('login'))
         return view_func(request, *args, **kwargs)
     return wrapper
+
+def _visible_zones(user):
+    if user.is_staff:
+        return Zone.objects.all()
+    permitted_ids = (Permission.objects.filter(user=user)
+                     .filter(Q(can_view=True) | Q(can_control=True))
+                     .values_list('zone_id', flat=True))
+    return Zone.objects.filter(pk__in=permitted_ids)
+
+
+def _controllable_zones(user):
+    if user.is_staff:
+        return Zone.objects.all()
+    permitted_ids = Permission.objects.filter(user=user, can_control=True).values_list('zone_id', flat=True)
+    return Zone.objects.filter(pk__in=permitted_ids)
+
 
 # Formulaires
 class UserForm(forms.ModelForm):
@@ -73,64 +91,60 @@ class ScheduleForm(forms.ModelForm):
 # Vues existantes
 @login_required
 def dashboard(request):
-    permissions = Permission.objects.filter(user=request.user, can_view=True)
-    zones = [perm.zone for perm in permissions]
-    return render(request, 'core/dashboard.html', {'zones': zones})
+    return render(request, 'core/dashboard.html', {'zones': _visible_zones(request.user)})
 
+
+@login_required
 def simulation_view(request):
-    all_zones = Zone.objects.prefetch_related('lamps').order_by('name')
-
-    context = {
-        'zones': all_zones
-    }
-    return render(request, 'core/simulation.html', context)
+    all_zones = _visible_zones(request.user).prefetch_related('lamps').order_by('name')
+    return render(request, 'core/simulation.html', {'zones': all_zones})
 
 
 
        
 
 @login_required
+@require_POST
 def toggle_lamp(request, lamp_id):
-    lamp = get_object_or_404(Lamp, pk=lamp_id, user=request.user)
-
+    lamp = get_object_or_404(Lamp.objects.filter(zone__in=_controllable_zones(request.user)), pk=lamp_id)
     controller = LightController()
     try:
         controller.toggle_lamp(lamp.id)
     except Exception as e:
         print(f"RPC call failed: {e}")
-
-    return redirect(request.META.get('HTTP_REFERER', 'dashboard'))
+        messages.error(request, "Failed to communicate with the control server.")
+    return redirect('control_zone', zone_id=lamp.zone_id)
 
 
 
 @login_required
 def control_zone(request, zone_id):
-    zone = get_object_or_404(Zone, pk=zone_id)
+    # Read access does not grant permission to operate a physical device.
+    zones = _controllable_zones(request.user) if request.method == "POST" else _visible_zones(request.user)
+    zone = get_object_or_404(zones, pk=zone_id)
+    can_control = _controllable_zones(request.user).filter(pk=zone.id).exists()
 
     if request.method == "POST":
-        controller = LightController()
         action = request.POST.get("action")
-
+        if action not in ("turn_on", "turn_off"):
+            messages.error(request, "Unknown lighting action.")
+            return redirect('control_zone', zone_id=zone.id)
+        controller = LightController()
         try:
             if action == "turn_on":
                 controller.turn_on(zone.id)
                 zone.current_state = True
-                zone.save(update_fields=['current_state'])
-                messages.success(request, f"Command to turn ON zone '{zone.name}' was sent.")
-
-            elif action == "turn_off":
+            else:
                 controller.turn_off(zone.id)
                 zone.current_state = False
-                zone.save(update_fields=['current_state'])
-                messages.success(request, f"Command to turn OFF zone '{zone.name}' was sent.")
-
+            zone.save(update_fields=['current_state'])
+            messages.success(request, f"Command to {action.replace('_', ' ')} zone '{zone.name}' was sent.")
         except Exception as e:
             print(f"RPC call failed: {e}")
             messages.error(request, "Failed to communicate with the control server.")
-
         return redirect('control_zone', zone_id=zone.id)
 
-    return render(request, 'core/zone_detail.html', {'zone': zone})
+    return render(request, 'core/zone_detail.html', {'zone': zone, 'can_control': can_control})
 
 # Vues pour la gestion admin
 @staff_member_required
@@ -234,7 +248,9 @@ class PredictionView(APIView):
         serializer = PredictionSerializer(schedules, many=True)
         return Response(serializer.data)
 
+@login_required
 def predictions_dashboard(request, zone_id):
+    get_object_or_404(_visible_zones(request.user), pk=zone_id)
     return render(request, 'core/predictions.html', {'zone_id': zone_id})
 
 class UsageFrequencyView(APIView):
@@ -255,6 +271,7 @@ class EnergyConsumptionView(APIView):
         serializer = EnergyConsumptionSerializer(analytics, many=True)
         return Response(serializer.data)
 
+@staff_member_required
 def stats_dashboard(request):
     return render(request, 'core/stats.html')
 

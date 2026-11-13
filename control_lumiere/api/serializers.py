@@ -18,7 +18,7 @@ class ZoneSerializer(serializers.ModelSerializer):
 class ScheduleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Schedule
-        fields = ["id", "zone", "start_time", "end_time", "days_of_week", "is_active", "valid_from", "valid_until"]
+        fields = ["id", "zone", "start_time", "end_time", "days", "is_active", "valid_from", "valid_until"]
 
 
 class PermissionSerializer(serializers.ModelSerializer):

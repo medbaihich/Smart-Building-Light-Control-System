@@ -1,0 +1,22 @@
+# Private local configuration and data
+.env
+.env.*
+!.env.example
+*.sqlite3
+*.db
+*.log
+*.py[cod]
+__pycache__/
+.venv/
+venv/
+
+# Local generated process state and static assets
+control_lumiere/celerybeat-schedule*
+control_lumiere/lamp_states.json
+control_lumiere/staticfiles/
+
+# Build and editor output
+.pytest_cache/
+.vscode/
+.idea/
+.DS_Store
